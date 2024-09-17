@@ -410,39 +410,46 @@ def calculate_map(predictions, ground_truths, iou_thresholds=arange(0.5, 1, 0.05
     aps = []
 
     ious = calculate_iou(predictions[:, 1:-1], ground_truths[:, 1:])  # [n_preds, n_gts]
+    if ious.numel() == 0:
+        mAP_5 = torch.tensor(0.0, device=device)
+        mAP_5_95 = torch.tensor(0.0, device=device)
+    else:
+        for threshold in iou_thresholds:
+            tp = torch.zeros(n_preds, device=device, dtype=bool)
+            max_iou, max_indices = ious.max(dim=1)
+            above_threshold = max_iou >= threshold
+            matched_classes = predictions[:, 0] == ground_truths[max_indices, 0]
+            max_match = torch.zeros_like(ious)
+            max_match[arange(n_preds), max_indices] = max_iou
+            if max_match.size(0):
+                tp[max_match.argmax(dim=0)] = True
+            tp[~above_threshold | ~matched_classes] = False
 
-    for threshold in iou_thresholds:
-        tp = torch.zeros(n_preds, device=device, dtype=bool)
+            _, indices = torch.sort(predictions[:, 1], descending=True)
+            tp = tp[indices]
 
-        max_iou, max_indices = ious.max(dim=1)
-        above_threshold = max_iou >= threshold
-        matched_classes = predictions[:, 0] == ground_truths[max_indices, 0]
-        max_match = torch.zeros_like(ious)
-        max_match[arange(n_preds), max_indices] = max_iou
-        if max_match.size(0):
-            tp[max_match.argmax(dim=0)] = True
-        tp[~above_threshold | ~matched_classes] = False
+            tp_cumsum = torch.cumsum(tp, dim=0)
+            fp_cumsum = torch.cumsum(~tp, dim=0)
 
-        _, indices = torch.sort(predictions[:, 1], descending=True)
-        tp = tp[indices]
+            precision = tp_cumsum / (tp_cumsum + fp_cumsum + 1e-6)
+            recall = tp_cumsum / (n_gts + 1e-6)
 
-        tp_cumsum = torch.cumsum(tp, dim=0)
-        fp_cumsum = torch.cumsum(~tp, dim=0)
+            precision = torch.cat([torch.ones(1, device=device), precision, torch.zeros(1, device=device)])
+            recall = torch.cat([torch.zeros(1, device=device), recall, torch.ones(1, device=device)])
 
-        precision = tp_cumsum / (tp_cumsum + fp_cumsum + 1e-6)
-        recall = tp_cumsum / (n_gts + 1e-6)
+            precision, _ = torch.cummax(precision.flip(0), dim=0)
+            precision = precision.flip(0)
 
-        precision = torch.cat([torch.ones(1, device=device), precision, torch.zeros(1, device=device)])
-        recall = torch.cat([torch.zeros(1, device=device), recall, torch.ones(1, device=device)])
+            ap = torch.trapezoid(precision, recall)
+            aps.append(ap)
+        
+        # Calculate mAP
+        mAP_5 = aps[0]
+        mAP_5_95 = torch.mean(torch.stack(aps))
 
-        precision, _ = torch.cummax(precision.flip(0), dim=0)
-        precision = precision.flip(0)
-
-        ap = torch.trapezoid(precision, recall)
-        aps.append(ap)
 
     mAP = {
-        "mAP.5": aps[0],
-        "mAP.5:.95": torch.mean(torch.stack(aps)),
+        "mAP.5": mAP_5,
+        "mAP.5:.95": mAP_5_95,
     }
     return mAP

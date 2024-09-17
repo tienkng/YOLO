@@ -118,6 +118,8 @@ class YoloDataset(Dataset):
         """
         bboxes = []
         for seg_data in seg_data_one_img:
+            if len(seg_data) > 5:
+                seg_data = seg_data[:5]
             cls = seg_data[0]
             points = np.array(seg_data[1:]).reshape(-1, 2)
             valid_points = points[(points >= 0) & (points <= 1)].reshape(-1, 2)
